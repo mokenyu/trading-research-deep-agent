@@ -4,4 +4,14 @@ version = "0.1.0"
 description = "Add your description here"
 readme = "README.md"
 requires-python = ">=3.12"
-dependencies = []
+dependencies = [
+    "deepagents>=0.7.21",
+    "ipython>=9.17.1",
+    "langchain>=1.4.3",
+    "langgraph>=1.2.12",
+    "langsmith>=0.14.4",
+    "matplotlib>=3.11.2",
+    "numpy>=2.5.3",
+    "pandas>=3.0.6",
+    "python-dotenv>=1.2.4",
+]
