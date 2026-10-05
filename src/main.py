@@ -26,3 +26,23 @@ pd.DataFrame([
     "first": j[0]["date"], 
     "last": j[-1]["date"]
     } for s in TICKERS ])
+
+def to_frame(symbol):
+    df = pd.DataFrame(json.loads((RAW/f"{symbol}.json").read_text()))
+    df["date"] = pd.to_datetime(df["date"])
+    return df.set_index("date").sort_index()[["close", "adjusted_close", "volume"]].astype(float)
+
+frames, report = {}, []
+for s in TICKERS:
+    d = to_frame(s)
+    report.append({
+        "symbol": s,
+        "rows": len(d),
+        "duplicate_dates": int(d.index.duplicated().sum()),
+        "missing": int(d.isna().sum().sum()),
+        "nonpositive_price": int((d[["close", "adjusted_close"]] <= 0).sum().sum()),
+        "zero_volume_days": int((d["volume"] <= 0).sum())
+    })
+    frames[s] = d[~d.index.duplicated(keep="last")]
+
+pd.DataFrame(report)
