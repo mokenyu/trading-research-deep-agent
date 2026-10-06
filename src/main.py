@@ -4,20 +4,26 @@ import requests, importlib.util
 import numpy as np, pandas as pd
 import matplotlib.pyplot as plt
 from IPython.display import Markdown, display
-from settings import eodhd_api, RAW, PRIVATE, ROOT, WS
+from settings import tiingo_api, RAW, PRIVATE, ROOT, WS
 
 TICKERS = ["SPY","QQQ","IWM","XLE","XLF","XLK","XLV","XLP","XLY"]
 START, END = "2004-01-01", "2025-12-31"
 
-def fetch_eod(symbol, start=START, end=END):
-    params = {"api_token": eodhd_api, "from": start, "to": end, "period": "d", "fmt": "json"}
-    r = requests.get(f"https://eodhd.com/api/eod/{symbol}.US", params=params, timeout=60)
+def fetch_tiingo(symbol: str, start: str = START, end: str = END):
+    """Fetch daily data from Tiingo API"""
+    headers = {
+        "Content-Type": "application/json",
+        "Authorization": f"Token {tiingo_api}"
+    }
+    params = {"startDate": start, "endDate": end, "format": "json"}
+    r = requests.get(f"https://api.tiingo.com/tiingo/daily/{symbol}/prices", headers=headers, params=params, timeout=60)
     return r.json()
 
 for s in TICKERS:
     f = RAW / f"{s}.json"
     if not f.exists():
-        f.write_text(json.dumps(fetch_eod(s))); time.sleep(0.3)
+        f.write_text(json.dumps(fetch_tiingo(s)))
+        time.sleep(0.3)
 
 pd.DataFrame([
     {
@@ -27,9 +33,12 @@ pd.DataFrame([
     "last": j[-1]["date"]
     } for s in TICKERS ])
 
-def to_frame(symbol):
+def to_frame(symbol) -> pd.DataFrame:
     df = pd.DataFrame(json.loads((RAW/f"{symbol}.json").read_text()))
-    df["date"] = pd.to_datetime(df["date"])
+    df["date"] = pd.to_datetime(df["date"]).dt.tz_localize(None)
+    # Map Tiingo's 'adjClose' to EODHD's 'adjusted_close' (will be updated to use just 'adj_close soon)
+    if "adjClose" in df.columns and "adjusted_close" not in df.columns:
+        df = df.rename(columns={"adjClose": "adjusted_close"})
     return df.set_index("date").sort_index()[["close", "adjusted_close", "volume"]].astype(float)
 
 frames, report = {}, []

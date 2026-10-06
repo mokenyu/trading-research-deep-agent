@@ -4,10 +4,10 @@ from pathlib import Path
 
 load_dotenv(override=True)
 
-for k in ["EODHD_API_KEY", "GOOGLE_API_KEY", "LANGSMITH_API_KEY"]:
+for k in ["TINGO_API_KEY", "GOOGLE_API_KEY", "LANGSMITH_API_KEY"]:
     assert os.environ.get(k), f"missing env var: {k}"
 
-eodhd_api = os.environ.get("EODHD_API_KEY")
+tiingo_api = os.environ.get("TINGO_API_KEY")
 
 BASE_DIR = Path(__file__).resolve().parent.parent
 
