@@ -1,7 +1,7 @@
 # Multi-Agent Quantitative Trading Research System
 
 [![Market Data](https://img.shields.io/badge/Market_Data-Tiingo_API-00A86B?style=for-the-badge)](docs/DATA_PROVIDERS.md)
-[![Handbook](https://img.shields.io/badge/Original_Handbook-freeCodeCamp-0A0A23?style=for-the-badge&logo=freecodecamp&logoColor=white)](https://www.freecodecamp.org/news/build-a-multi-agent-trading-research-system-with-langchain-deep-agents-handbook/)
+[![Handbook](https://img.shields.io/badge/Handbook-FCC-0A0A23?style=for-the-badge&logo=freecodecamp&logoColor=white)](https://www.freecodecamp.org/news/build-a-multi-agent-trading-research-system-with-langchain-deep-agents-handbook/)
 [![Python 3.12+](https://img.shields.io/badge/Python-3.12%2B-3776AB?style=for-the-badge&logo=python&logoColor=white)](https://www.python.org/)
 [![LangChain Deep Agents](https://img.shields.io/badge/LangChain-Deep_Agents-1C3C3C?style=for-the-badge&logo=langchain&logoColor=white)](https://github.com/langchain-ai/deepagents)
 [![LangGraph](https://img.shields.io/badge/LangGraph-Checkpointers-0B5394?style=for-the-badge&logo=langchain&logoColor=white)](https://langchain-ai.github.io/langgraph/)
