@@ -1,0 +1,30 @@
+{
+  "params": {
+    "mom_window": 63,
+    "top_n": 3
+  },
+  "dev": {
+    "cagr": 0.0483,
+    "ann_ret": 0.0597,
+    "vol": 0.1582,
+    "sharpe": 0.3774,
+    "sortino": 0.5239,
+    "max_dd": -0.5188,
+    "ann_turnover": 9.6878,
+    "ann_cost": 0.0097,
+    "avg_cash": 0.0908,
+    "bench_cagr": 0.0847
+  },
+  "val": {
+    "cagr": 0.1382,
+    "ann_ret": 0.1517,
+    "vol": 0.2102,
+    "sharpe": 0.7216,
+    "sortino": 0.9895,
+    "max_dd": -0.2927,
+    "ann_turnover": 10.1364,
+    "ann_cost": 0.0101,
+    "avg_cash": 0.0833,
+    "bench_cagr": 0.1754
+  }
+}

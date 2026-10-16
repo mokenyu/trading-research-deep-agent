@@ -1,0 +1,38 @@
+{
+  "dev": {
+    "cagr": 0.0782,
+    "ann_ret": 0.0864,
+    "vol": 0.1494,
+    "sharpe": 0.5787,
+    "sortino": 0.8058,
+    "max_dd": -0.2827,
+    "ann_turnover": 7.1703,
+    "ann_cost": 0.0072,
+    "avg_cash": 0.077,
+    "bench_cagr": 0.0847
+  },
+  "val": {
+    "cagr": 0.2223,
+    "ann_ret": 0.2258,
+    "vol": 0.2229,
+    "sharpe": 1.0127,
+    "sortino": 1.436,
+    "max_dd": -0.2901,
+    "ann_turnover": 6.8353,
+    "ann_cost": 0.0068,
+    "avg_cash": 0.0,
+    "bench_cagr": 0.1754
+  },
+  "holdout": {
+    "cagr": 0.0596,
+    "ann_ret": 0.0746,
+    "vol": 0.1825,
+    "sharpe": 0.4088,
+    "sortino": 0.5586,
+    "max_dd": -0.2248,
+    "ann_turnover": 8.5309,
+    "ann_cost": 0.0085,
+    "avg_cash": 0.0209,
+    "bench_cagr": 0.1106
+  }
+}

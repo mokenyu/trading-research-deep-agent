@@ -1,0 +1,8 @@
+{
+  "version": "v2",
+  "params": {
+    "mom_window": 126,
+    "top_n": 3
+  },
+  "rationale": "v2 (Run 5: mom_window=126, top_n=3) replaced v1 by passing all three selection gates: Gate 1 passed (val_sharpe 1.013 >= v1's 0.565), Gate 2 passed (val_max_dd -0.290 vs v1's -0.290, within 2pp), and Gate 3 passed (dev_turnover 7.170 <= 1.2x v1's 11.761 = 14.113). Challenger v3 failed to replace v2 because every v3 configuration failed Gate 1 against v2's val_sharpe of 1.013 (v3 achieved val_sharpe 0.963 at mom_window=126, top_n=3 and at best 0.989 at mom_window=126, top_n=2, despite passing Gate 2 with val_max_dd -0.290/-0.295 and Gate 3 with dev_turnover 4.716/6.100). Per the fixed selection rule, v2 remains the final champion."
+}
