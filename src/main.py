@@ -17,6 +17,8 @@ if str(PROJECT_ROOT) not in sys.path:
 import os, json, time, shutil, tempfile, subprocess, sys, traceback
 import requests, importlib.util
 import numpy as np, pandas as pd
+import matplotlib
+matplotlib.use("Agg")
 import matplotlib.pyplot as plt
 import logging
 from src.settings import tiingo_api, RAW, PRIVATE, ROOT, WS
@@ -655,139 +657,15 @@ plt.show()
 # Set Agent Roles and Boundaries
 # ------------------------------------------------------------------------------
 
-
-# load_dotenv(override=True)
 from deepagents import create_deep_agent, FilesystemPermission
 from deepagents.backends import FilesystemBackend
 from langchain.chat_models import init_chat_model
 from langgraph.checkpoint.memory import InMemorySaver
+from src.agents import COORDINATOR, critic, engineer
 
 MODEL_ID = "google_genai:gemini-4-argon"
 WORKER = init_chat_model(MODEL_ID, reasoning_effort="low") # reasoning={"effort": "low"} for openai models
 MANAGER = init_chat_model(MODEL_ID, reasoning_effort="medium")
-
-# Provide Definition of what a strategy is
-
-CONTRACT = """
-Every strategy file defines exactly one function:
-    def target_weights(data, **params) -> pd.Dataframe
-    index: rebalance dates, all of which must exist in data["adj_close"].index
-    columns: the nine tickers
-    values: target weights, each row summing to <= 1.0 (remainder is cash)
-data keys: adj_close, close, volume, returns (DataFrames, dates x tickers)
-Use adj_close for momentum and returns. Use close * volume for dollar volume.
-A row dated t is a decision made on t's close; the engine applies it on t+1.
-Guard against empty selections: if nothing qualifies, leave the row at zero.
-
-Your code runs in an isolated subprocess with no network, no credentials and no
-holdout data. Import only pandas and numpy.
-
-Working skeleton:
-
-import pandas as pd
-def target_weights(data, mom_window=126, top_n=3):
-    adj = data["adj_close"]
-    mom = adj.pct_change(mom_window)
-    dates = pd.DatetimeIndex(adj.index.to_series().resample("ME").last().dropna())
-    w = pd.DataFrame(0.0, index=dates, columns=adj.columns)
-    for d in dates:
-        picks = mom.loc[d].dropna().nlargest(top_n).index
-        if len(picks):
-            w.loc[d, picks] = 1.0 / len(picks)
-    return w
-
-"""
-
-# Add research controls from previous layer into agent's prompt
-
-RULES = f"""
-Layout: /strategies/vN.py, /results/, /reviews/, /registry.csv, /decisions.jsonl
-
-Stage gates, enforced by the sweep tool:
-vN cannot be swept until v(N-1) has successful runs, a review at /reviews/v(N-1).md,
-and a decision recorded via record_decision. There is no way around this.
-
-Hard limits: three versions; at most 12 configurations per version; one major
-structural change per revision. Engine, universe, splits, benchmark and cost
-convention are fixed. The holdout does not exist for you; never ask for it.
-
-{SELECTION_RULE}
-
-Fixed benchmarks, computed before any version was written:
-{BENCH_TEXT}
-
-Do not call ls, glob, grep or read_file unless told a specific file exists and you
-need its contents.
-"""
-
-# Engineer Deep Agent
-
-engineer = {
-    "name": "strategy-engineer",
-    "description": "Writes strategy files and sweeps them through the fixed backtester in one batched call. Use for anything that creates code or produces metrics.",
-    "system_prompt": f"""You implement strategies. You do not decide what to implement.
-{RULES}{CONTRACT}
-Procedure:
-1. Write the strategy file with write_file.
-2. Call sweep ONCE with the entire parameter grid as a JSON list. Never per configuration.
-3. If a run errors, read the message, fix the file, call sweep again. Errors count
-   against the budget.
-4. Report back in under 200 words: filename, the returned table verbatim, and the one
-   configuration you recommend with a one-line reason. Never paste code back.""",
-    "tools": [sweep],
-    "model": WORKER,
-}
-
-# Research Critic Role
-
-critic = {
-    "name": "research-critic",
-    "description": "Reads a results table and returns exactly one evidence-backed weakness with one proposed structural change. Use after every version is swept.",
-    "system_prompt": f"""You review results. You never write or edit strategy code.
-{RULES}
-The results table is given to you in the task description. Do not go looking for it.
-Call read_registry only to compare against an earlier version.
-
-Write your review to /reviews/vN.md under exactly these five headings:
-
-Weakness     one sentence
-Evidence     specific numbers from the table, compared against the fixed benchmarks
-Change       one structural change, not a parameter nudge
-Expected     what it should do to which metric, and why
-Overfit risk how this could be curve-fitting, and what would disconfirm it
-
-A higher Sharpe alone is not evidence. Compare against equal-weight buy-and-hold and
-plain momentum, not just SPY. Check the 20bps column against the 10bps one, whether
-the dev result survives validation, and whether neighbouring parameters behave
-similarly. If dev and val disagree, that disagreement is the finding.""",
-    "tools": [read_registry],
-    "model": MANAGER,
-    "permissions": [
-        FilesystemPermission(operations=["write"], paths=["/strategies/**"], mode="deny"),
-        FilesystemPermission(operations=["read","write"], paths=["/**"], mode="allow"),
-    ],
-}
-
-
-# ------------------------------------------------------------------------------
-# Create Coordinator Agent
-# ------------------------------------------------------------------------------
-
-
-COORDINATOR = f"""You run a quantitative research process and are judged on the honesty
-of the process, not on the returns.
-{RULES}
-Your loop for each version N:
-1. plan with write_todos
-2. delegate implementation and sweeping to strategy-engineer
-3. pass the engineer's table verbatim into the task description for research-critic
-4. apply the selection rule yourself and state which gates passed or failed
-5. call record_decision with the resulting champion and your rationale
-
-Step 5 is mandatory. The next version is blocked until it is done.
-
-Reject proposals that are parameter tuning dressed up as structure. The champion does
-not change just because a newer version exists. Never overwrite an earlier version."""
 
 agent = create_deep_agent(
     model=MANAGER,
@@ -818,140 +696,142 @@ print(WORKER.invoke("reply with the single word: ok").content)
 # REPRODUCE MANUAL BASELINE AS V1
 # ==============================================================================
 
+def main():
+    V1_BRIEF = """Build Version 1, the baseline.
 
-V1_BRIEF = """Build Version 1, the baseline.
+    Delegate to strategy-engineer. /strategies/v1.py: 126-day momentum from adjusted close;
+    20-day over 120-day average dollar volume from raw close x raw volume; eligible if
+    momentum > 0 and volume ratio > 1.0; rank eligible by momentum, hold top 3 equal weight,
+    rebalance monthly, cash otherwise. Parameters: mom_window, vol_short, vol_long,
+    vol_ratio_min, top_n.
 
-Delegate to strategy-engineer. /strategies/v1.py: 126-day momentum from adjusted close;
-20-day over 120-day average dollar volume from raw close x raw volume; eligible if
-momentum > 0 and volume ratio > 1.0; rank eligible by momentum, hold top 3 equal weight,
-rebalance monthly, cash otherwise. Parameters: mom_window, vol_short, vol_long,
-vol_ratio_min, top_n.
+    Sweep exactly these nine in one call: mom_window in (63, 126, 189) crossed with
+    top_n in (2, 3, 4), everything else at default.
 
-Sweep exactly these nine in one call: mom_window in (63, 126, 189) crossed with
-top_n in (2, 3, 4), everything else at default.
+    Pass the table to research-critic for a review of v1, telling it to compare against the
+    fixed benchmarks. Then apply the selection rule (v1 has no incumbent, so it becomes the
+    champion by default) and call record_decision for v1.
 
-Pass the table to research-critic for a review of v1, telling it to compare against the
-fixed benchmarks. Then apply the selection rule (v1 has no incumbent, so it becomes the
-champion by default) and call record_decision for v1.
+    Finally report: the chosen configuration, how it compares to equal-weight buy-and-hold
+    and plain momentum, and the critic's proposal with your decision."""
 
-Finally report: the chosen configuration, how it compares to equal-weight buy-and-hold
-and plain momentum, and the critic's proposal with your decision."""
-
-_ = run(V1_BRIEF)
-
-
-# ==============================================================================
-# AGENT STRATEGY REVISION: TEST MARKET-REGIME FILTER IN V2
-# ==============================================================================
+    _ = run(V1_BRIEF)
 
 
-V2_BRIEF = """Review the critic's v1 proposal in /reviews/v1.md. If you approve it, have
-strategy-engineer implement it as /strategies/v2.py. Do not modify v1.py.
-Sweep at most 12 configurations in one call. Pass the table to research-critic for a
-review written to /reviews/v2.md. Then apply the selection rule between v2 and the
-current champion, state which of the three gates passed and which failed, and call
-record_decision for v2. Do not proceed past that."""
-
-_ = run(V2_BRIEF)
-
-# Verify if v2 experiments, review and decision have been persisted
-
-print(pd.read_csv(REGISTRY).groupby(["version","status"]).size())
-print("decisions:", [d["version"] for d in _decisions()])
-assert (WS/"reviews"/"v2.md").exists(), "v2 review missing"
-assert any(d["version"] == "v2" for d in _decisions()), "v2 decision missing"
-print("v2 cycle complete")
+    # ==============================================================================
+    # AGENT STRATEGY REVISION: TEST MARKET-REGIME FILTER IN V2
+    # ==============================================================================
 
 
-# ==============================================================================
-# RUN FINAL REVISION IN V3
-# ==============================================================================
+    V2_BRIEF = """Review the critic's v1 proposal in /reviews/v1.md. If you approve it, have
+    strategy-engineer implement it as /strategies/v2.py. Do not modify v1.py.
+    Sweep at most 12 configurations in one call. Pass the table to research-critic for a
+    review written to /reviews/v2.md. Then apply the selection rule between v2 and the
+    current champion, state which of the three gates passed and which failed, and call
+    record_decision for v2. Do not proceed past that."""
+
+    _ = run(V2_BRIEF)
+
+    # Verify if v2 experiments, review and decision have been persisted
+
+    print(pd.read_csv(REGISTRY).groupby(["version","status"]).size())
+    print("decisions:", [d["version"] for d in _decisions()])
+    assert (WS/"reviews"/"v2.md").exists(), "v2 review missing"
+    assert any(d["version"] == "v2" for d in _decisions()), "v2 decision missing"
+    print("v2 cycle complete")
 
 
-V3_BRIEF = """Implement the final approved revision as /strategies/v3.py. Do not modify
-v1 or v2. Sweep at most 12 configurations in one call, get a critic review at
-/reviews/v3.md, apply the selection rule, and call record_decision for v3.
-
-Then write /strategies/frozen.json containing exactly:
-{"version": "<champion version>", "params": {...}, "rationale": "..."}
-where the version is whichever the selection rule says is champion, which may be v1 or
-v2 rather than v3. After writing that file, stop."""
-
-_ = run(V3_BRIEF)
-
-display(Markdown("### Decision log"))
-for dd_ in _decisions():
-    print(f"{dd_['version']} -> champion {dd_['champion']}: {dd_['rationale'][:160]}")
-print("\nfrozen:", (WS/"strategies"/"frozen.json").read_text())
+    # ==============================================================================
+    # RUN FINAL REVISION IN V3
+    # ==============================================================================
 
 
-# ==============================================================================
-# FREEZE THE CHAMPION AND UNLOCK HOLDOUT
-# ==============================================================================
+    V3_BRIEF = """Implement the final approved revision as /strategies/v3.py. Do not modify
+    v1 or v2. Sweep at most 12 configurations in one call, get a critic review at
+    /reviews/v3.md, apply the selection rule, and call record_decision for v3.
+
+    Then write /strategies/frozen.json containing exactly:
+    {"version": "<champion version>", "params": {...}, "rationale": "..."}
+    where the version is whichever the selection rule says is champion, which may be v1 or
+    v2 rather than v3. After writing that file, stop."""
+
+    _ = run(V3_BRIEF)
+
+    display(Markdown("### Decision log"))
+    for dd_ in _decisions():
+        print(f"{dd_['version']} -> champion {dd_['champion']}: {dd_['rationale'][:160]}")
+    print("\nfrozen:", (WS/"strategies"/"frozen.json").read_text())
 
 
-frozen = json.loads((WS/"strategies"/"frozen.json").read_text())
-print("frozen:", frozen)
-assert len(_decisions()) == 3, f"expected 3 decisions, found {len(_decisions())}"
-for v in ["v1","v2","v3"]:
-    assert (WS/"reviews"/f"{v}.md").exists(), f"missing review for {v}"
-    assert not pd.read_csv(REGISTRY).query(f"version=='{v}' and status=='ok'").empty, f"no runs for {v}"
-print("all three cycles complete")
-
-for field in ["adj_close","close","volume"]:
-    DATA["holdout"][field].to_parquet(WS/"data"/f"holdout_{field}.parquet")
-
-final = {}
-for split in ["dev","val","holdout"]:
-    res = run_isolated(WS/"strategies"/f"{frozen['version']}.py", frozen["params"], split)
-    assert res["ok"], res["error"]
-    final[split] = res["metrics"]
-    plt.plot(pd.Series(res["equity"], index=pd.to_datetime(res["dates"])), label=split)
-plt.yscale("log"); plt.legend(); plt.title(f"frozen {frozen['version']} across all periods"); plt.show()
-
-(WS/"results"/"holdout.json").write_text(json.dumps(final, indent=2))
-BENCH_HOLD = benchmark_table("holdout")
-comparison = pd.concat([pd.DataFrame(final).T.assign(source="strategy"),
-                        BENCH_HOLD.assign(source="benchmark_holdout")])
-print(comparison[["cagr","sharpe","sortino","max_dd","ann_turnover","source"]])
+    # ==============================================================================
+    # FREEZE THE CHAMPION AND UNLOCK HOLDOUT
+    # ==============================================================================
 
 
-# ==============================================================================
-# AUDIT COMPLETE RESEARCH TRAIL
-# ==============================================================================
+    frozen = json.loads((WS/"strategies"/"frozen.json").read_text())
+    print("frozen:", frozen)
+    assert len(_decisions()) == 3, f"expected 3 decisions, found {len(_decisions())}"
+    for v in ["v1","v2","v3"]:
+        assert (WS/"reviews"/f"{v}.md").exists(), f"missing review for {v}"
+        assert not pd.read_csv(REGISTRY).query(f"version=='{v}' and status=='ok'").empty, f"no runs for {v}"
+    print("all three cycles complete")
+
+    for field in ["adj_close","close","volume"]:
+        DATA["holdout"][field].to_parquet(WS/"data"/f"holdout_{field}.parquet")
+
+    final = {}
+    for split in ["dev","val","holdout"]:
+        res = run_isolated(WS/"strategies"/f"{frozen['version']}.py", frozen["params"], split)
+        assert res["ok"], res["error"]
+        final[split] = res["metrics"]
+        plt.plot(pd.Series(res["equity"], index=pd.to_datetime(res["dates"])), label=split)
+    plt.yscale("log"); plt.legend(); plt.title(f"frozen {frozen['version']} across all periods"); plt.show()
+
+    (WS/"results"/"holdout.json").write_text(json.dumps(final, indent=2))
+    BENCH_HOLD = benchmark_table("holdout")
+    comparison = pd.concat([pd.DataFrame(final).T.assign(source="strategy"),
+                            BENCH_HOLD.assign(source="benchmark_holdout")])
+    print(comparison[["cagr","sharpe","sortino","max_dd","ann_turnover","source"]])
 
 
-REPORT_BRIEF = f"""The holdout has been run once and the strategy is frozen. Nothing can change now.
+    # ==============================================================================
+    # AUDIT COMPLETE RESEARCH TRAIL
+    # ==============================================================================
 
-Frozen: {json.dumps(frozen)}
-Metrics by period: {json.dumps(final)}
-Holdout benchmarks: {BENCH_HOLD[COLS_B].to_json()}
 
-Call read_registry once with no argument, read /decisions.jsonl and every file in
-/reviews/, then write /report.md covering:
+    REPORT_BRIEF = f"""The holdout has been run once and the strategy is frozen. Nothing can change now.
 
-1. What changed at each version and what evidence drove it
-2. How the selection rule decided each champion, including gates that failed
-3. Whether the revisions improved the research case, separately from returns
-4. How the frozen strategy compares to SPY buy-and-hold, equal-weight buy-and-hold,
-   and plain momentum on the holdout
-5. Whether the volume filter earned its turnover
-6. Where you made weak decisions, accepted thin evidence, or got lucky
+    Frozen: {json.dumps(frozen)}
+    Metrics by period: {json.dumps(final)}
+    Holdout benchmarks: {BENCH_HOLD[COLS_B].to_json()}
 
-Cite run numbers from the registry. Do not defend the result."""
+    Call read_registry once with no argument, read /decisions.jsonl and every file in
+    /reviews/, then write /report.md covering:
 
-_ = run(REPORT_BRIEF)
+    1. What changed at each version and what evidence drove it
+    2. How the selection rule decided each champion, including gates that failed
+    3. Whether the revisions improved the research case, separately from returns
+    4. How the frozen strategy compares to SPY buy-and-hold, equal-weight buy-and-hold,
+    and plain momentum on the holdout
+    5. Whether the volume filter earned its turnover
+    6. Where you made weak decisions, accepted thin evidence, or got lucky
 
-# Render report alongside full experiment registry and verify version data
+    Cite run numbers from the registry. Do not defend the result."""
 
-display(Markdown("## Agent report"))
-display(Markdown((WS / "report.md").read_text(encoding="utf-8")))
+    _ = run(REPORT_BRIEF)
 
-display(Markdown("## Experiment registry"))
-reg = pd.read_csv(REGISTRY)
-display(reg[["version","run","status","params","dev_sharpe","dev_sortino",
-             "dev_max_dd","dev_turnover","val_sharpe","val_max_dd","dev_cagr_20bps"]])
-print("versions with runs:", sorted(reg["version"].unique()))
-print("decisions recorded:", [d["version"] for d in _decisions()])
-print("reviews on disk:  ", sorted(p.stem for p in (WS/"reviews").glob("*.md")))
+    # Render report alongside full experiment registry and verify version data
 
+    display(Markdown("## Agent report"))
+    display(Markdown((WS / "report.md").read_text(encoding="utf-8")))
+
+    display(Markdown("## Experiment registry"))
+    reg = pd.read_csv(REGISTRY)
+    display(reg[["version","run","status","params","dev_sharpe","dev_sortino",
+                "dev_max_dd","dev_turnover","val_sharpe","val_max_dd","dev_cagr_20bps"]])
+    print("versions with runs:", sorted(reg["version"].unique()))
+    print("decisions recorded:", [d["version"] for d in _decisions()])
+    print("reviews on disk:  ", sorted(p.stem for p in (WS/"reviews").glob("*.md")))
+
+if __name__ == "__main__":
+    main()
