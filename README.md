@@ -8,9 +8,11 @@
 [![Google Gemini](https://img.shields.io/badge/Google_Gemini-Agent_Platform_%2F_Vertex_AI-4285F4?style=for-the-badge&logo=googlecloud&logoColor=white)](https://cloud.google.com/vertex-ai)
 [![LangSmith](https://img.shields.io/badge/LangSmith-Observability-FF6C37?style=for-the-badge&logo=langchain&logoColor=white)](https://smith.langchain.com/)
 
-| ![Post-Mortem Research Report Execution](docs/code_execution.png) | ![LangSmith Trace & Cost Overview](docs/langsmith_tracing/cost_and_token_details.png) |
-| :---: | :---: |
-| *Final post-mortem audit report rendered in `main.ipynb` after completing all 3 strategy versions and unlocking the holdout split* | *LangSmith root trace breakdown showing multi-agent execution latency and total token usage ($0.68 across 446.5K tokens)* |
+![Post-Mortem Research Report Execution](docs/code_execution.png)
+*Final audit report* 
+
+![LangSmith Trace & Cost Overview](docs/langsmith_tracing/cost_and_token_details.png)
+*LangSmith root trace breakdown showing multi-agent execution latency and total token usage ($0.68 across 446.5K tokens)*
 
 ---
 
