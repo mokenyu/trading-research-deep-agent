@@ -1,5 +1,5 @@
 import pandas as pd
-from src.settings import WS, TICKERS
+from src.settings import WS, TICKERS, logger
 from src.engine import backtest, metrics, load_split
 
 def bh_weights(data, tickers):
@@ -52,7 +52,10 @@ def compute_benchmarks():
     (WS / "BENCHMARKS.md").write_text("# Fixed benchmarks\n\n```\n" + bench_text + "\n```\n")
 
     ab = bench["dev"].loc["volume_mom"] - bench["dev"].loc["plain_mom"]
-    print(bench["dev"][COLS_B])
-    print(f"\nvolume filter effect on dev: sharpe {ab['sharpe']:+.4f}, "
-            f"cagr {ab['cagr']:+.4f}, turnover {ab['ann_turnover']:+.2f}")
+    logger.debug("Fixed Benchmarks:\n%s", bench_text)
+    logger.info(
+        "Benchmarks computed (saved to BENCHMARKS.md) | Volume filter effect on dev: "
+        "sharpe %+.4f, cagr %+.4f, turnover %+.2f",
+        ab["sharpe"], ab["cagr"], ab["ann_turnover"]
+    )
     return bench_text

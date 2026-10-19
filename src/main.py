@@ -1,14 +1,4 @@
 
-# adding project root
-import sys
-from pathlib import Path
-
-# Determine project root relative to this file
-PROJECT_ROOT = Path(__file__).resolve().parent.parent
-
-if str(PROJECT_ROOT) not in sys.path:
-    sys.path.insert(0, str(PROJECT_ROOT))
-
 import os, json, time, shutil
 import requests
 import numpy as np, pandas as pd
@@ -17,7 +7,7 @@ matplotlib.use("Agg")
 import matplotlib.pyplot as plt
 import logging
 
-from src.settings import tiingo_api, RAW, PRIVATE, ROOT, WS
+from src.settings import tiingo_api, RAW, PRIVATE, ROOT, WS, EXEC_RESULTS, LOG_FILE, logger
 from src.settings import TICKERS, START, END, SPLITS, WARMUP
 from src.engine import backtest, metrics
 
@@ -28,7 +18,25 @@ from src.benchmarks import benchmark_table, COLS_B, volume_momentum
 # Suppress informational AFC warning from google-genai SDK
 logging.getLogger("google_genai.models").setLevel(logging.ERROR)
 
-from IPython.display import Markdown, display
+
+## Clear previous run artifacts before research run
+
+
+for d in [WS/"strategies", WS/"results", WS/"reviews", PRIVATE, EXEC_RESULTS]:
+    shutil.rmtree(d, ignore_errors=True)
+    d.mkdir(parents=True, exist_ok=True)
+
+for f in [WS/"registry.csv", WS/"decisions.jsonl", WS/"report.md", WS/"frozen.json", WS/"strategies"/"frozen.json"]:
+    f.unlink(missing_ok=True)
+
+for f in WS.glob("data/holdout_*.parquet"):
+    f.unlink()
+
+logger.info(
+    "Workspace reset complete (private: %s, holdout on disk: %s)",
+    list(PRIVATE.iterdir()) or "empty",
+    list(ROOT.rglob("holdout*")) or "NONE"
+)
 
 
 ## FETCH AND FORMAT DATA
@@ -49,13 +57,15 @@ for s in TICKERS:
         f.write_text(json.dumps(fetch_tiingo(s)))
         time.sleep(0.3)
 
-print(pd.DataFrame([
+raw_summary = pd.DataFrame([
     {
     "symbol": s, 
     "rows": len(j := json.loads((RAW/f"{s}.json").read_text())), 
     "first": j[0]["date"], 
     "last": j[-1]["date"]
-    } for s in TICKERS ]))
+    } for s in TICKERS ])
+logger.info("Raw Tiingo data loaded for %d tickers", len(TICKERS))
+logger.debug("Raw Tiingo data summary:\n%s", raw_summary.to_string(index=False))
 
 
 ## Check data for discrepancies
@@ -82,7 +92,8 @@ for s in TICKERS:
     })
     frames[s] = d[~d.index.duplicated(keep="last")]
 
-print(pd.DataFrame(report))
+logger.info("Data quality check completed across all tickers")
+logger.debug("Data discrepancy report:\n%s", pd.DataFrame(report).to_string(index=False))
 
 
 ## Align Histories by Trading Date and Create 3 research periods.
@@ -119,31 +130,14 @@ DELETE_RAW_CACHE = False
 if DELETE_RAW_CACHE:
     shutil.rmtree(RAW, ignore_errors=True)
 
-print("holdout files on disk:", list(ROOT.rglob("holdout*")) or "NONE")
-print(pd.DataFrame({
+split_summary = pd.DataFrame({
     n: {
         "rows": len(DATA[n]["adj_close"]), "eval_start": DATA[n]["eval_start"].date(),
         "end": DATA[n]["adj_close"].index[-1].date()
         } for n in SPLITS
-    }).T)
-
-
-## Clear previous run artifacts before research run
-
-
-for d in [WS/"strategies", WS/"results", WS/"reviews", PRIVATE]:
-    shutil.rmtree(d, ignore_errors=True)
-    d.mkdir(parents=True, exist_ok=True)
-
-for f in [WS/"registry.csv", WS/"decisions.jsonl", WS/"report.md", WS/"frozen.json", WS/"strategies"/"frozen.json"]:
-    f.unlink(missing_ok=True)
-
-for f in WS.glob("data/holdout_*.parquet"):
-    f.unlink()
-
-print("private:", list(PRIVATE.iterdir()) or 'empty')
-print("holdout on disk:", list(ROOT.rglob('holdout*')) or "NONE")
-print("workspace reset")
+    }).T
+logger.info("Research splits aligned (holdout files on disk: %s)", list(ROOT.rglob("holdout*")) or "NONE")
+logger.debug("Research split date ranges:\n%s", split_summary.to_string())
 
 
 ## Verify Portfolio Accounting
@@ -152,7 +146,7 @@ print("workspace reset")
 w = pd.DataFrame(0.0, index=[DATA["dev"]["adj_close"].index[0]], columns=TICKERS)
 w.iloc[0, 0] = 1.0
 assert round(backtest(w, DATA["dev"]["returns"]).turnover.sum(), 4) == 1.0
-print("turnover check ok")
+logger.info("Turnover check ok")
 
 
 ## Verify Execution Parity and Data Boundaries
@@ -176,7 +170,7 @@ d = DATA["dev"]
 inp = metrics(backtest(volume_momentum(d, 126, 3), d["returns"]).loc[d["eval_start"]:],
               d["returns"]["SPY"].loc[d["eval_start"]:])
 assert iso["metrics"]["sharpe"] == inp["sharpe"], "isolated and in-process disagree"
-print("parity ok:", iso["metrics"]["sharpe"])
+logger.info("Parity check ok: dev sharpe=%s", iso["metrics"]["sharpe"])
 
 PROBE = f'''import os, glob
 def target_weights(data, **k):
@@ -186,7 +180,7 @@ def target_weights(data, **k):
 '''
 (WS/"strategies"/"probe.py").write_text(PROBE)
 msg = run_isolated(WS/"strategies"/"probe.py", {}, "dev")["error"].strip().split("\n")[-1]
-print("probe:", msg)
+logger.info("Security probe ok: %s", msg)
 assert "KEYS=[]" in msg, "credentials reachable from the sandbox"
 assert "REACHABLE_SENSITIVE_FILES=0" in msg, "holdout or private files reachable from the sandbox"
 
@@ -212,7 +206,8 @@ d = DATA["dev"]
 bt = backtest(manual_baseline(d), d["returns"])
 ev = bt.loc[d["eval_start"]:]
 spy = d["returns"]["SPY"].loc[d["eval_start"]:]
-print(metrics(ev, spy))
+baseline_metrics = metrics(ev, spy)
+logger.debug("Manual baseline dev metrics: %s", baseline_metrics)
 
 fig, ax = plt.subplots(2, 1, figsize=(9, 5), sharex=True, height_ratios=[2, 1])
 eq = (1 + ev["ret"]).cumprod()
@@ -221,15 +216,20 @@ ax[0].set_yscale("log"); ax[0].legend(); ax[0].set_title("Development 2005-2017"
 ax[1].fill_between(eq.index, (eq / eq.cummax() - 1), 0, alpha=.4)
 ax[1].set_ylabel("drawdown")
 plt.tight_layout()
-plt.show()
+baseline_plot_path = EXEC_RESULTS / "manual_baseline_dev.png"
+plt.savefig(baseline_plot_path, dpi=120)
+plt.close(fig)
+logger.info("Manual baseline evaluated (dev sharpe=%s); plot saved to %s", baseline_metrics["sharpe"], baseline_plot_path)
 
 # DEEP AGENTS RESEARCH TEAM CONFIGURATION
 
 def run(prompt: str, agent, thread):
+    logger.info("Running agent workflow for thread '%s'...", thread)
     out = agent.invoke({"messages": [{"role":"user","content":prompt}]}, {"configurable": {"thread_id": thread}})
     c = out["messages"][-1].content
-    print(c if isinstance(c, str) else
-          "\n".join(b.get("text","") for b in c if b.get("type") == "text"))
+    text = c if isinstance(c, str) else "\n".join(b.get("text","") for b in c if b.get("type") == "text")
+    logger.debug("Agent [%s] final response:\n%s", thread, text)
+    logger.info("Completed agent workflow for thread '%s'", thread)
     return out
 
 
@@ -270,11 +270,10 @@ def main():
 
     # Verify if v2 experiments, review and decision have been persisted
 
-    print(pd.read_csv(REGISTRY).groupby(["version","status"]).size())
-    print("decisions:", [d["version"] for d in _decisions()])
+    logger.debug("Registry counts after v2:\n%s", pd.read_csv(REGISTRY).groupby(["version","status"]).size().to_string())
     assert (WS/"reviews"/"v2.md").exists(), "v2 review missing"
     assert any(d["version"] == "v2" for d in _decisions()), "v2 decision missing"
-    print("v2 cycle complete")
+    logger.info("v2 cycle complete (decisions recorded: %s)", [d["version"] for d in _decisions()])
 
 
     # RUN FINAL REVISION IN V3
@@ -290,38 +289,43 @@ def main():
 
     _ = run(V3_BRIEF, agent, "v3")
 
-    display(Markdown("### Decision log"))
     for dd_ in _decisions():
-        print(f"{dd_['version']} -> champion {dd_['champion']}: {dd_['rationale'][:160]}")
-    print("\nfrozen:", (WS/"strategies"/"frozen.json").read_text())
+        logger.debug("Decision [%s] -> champion %s: %s", dd_["version"], dd_["champion"], dd_["rationale"])
+    logger.debug("Frozen config content: %s", (WS/"strategies"/"frozen.json").read_text())
 
 
     # FREEZE THE CHAMPION AND UNLOCK HOLDOUT
 
     frozen = json.loads((WS/"strategies"/"frozen.json").read_text())
-    print("frozen:", frozen)
+    logger.info("Champion frozen: version=%s, params=%s", frozen["version"], frozen["params"])
     assert len(_decisions()) == 3, f"expected 3 decisions, found {len(_decisions())}"
     for v in ["v1","v2","v3"]:
         assert (WS/"reviews"/f"{v}.md").exists(), f"missing review for {v}"
         assert not pd.read_csv(REGISTRY).query(f"version=='{v}' and status=='ok'").empty, f"no runs for {v}"
-    print("all three cycles complete")
+    logger.info("All three research cycles verified complete")
 
     for field in ["adj_close","close","volume"]:
         DATA["holdout"][field].to_parquet(WS/"data"/f"holdout_{field}.parquet")
 
     final = {}
+    plt.figure(figsize=(9, 5))
     for split in ["dev","val","holdout"]:
         res = run_isolated(WS/"strategies"/f"{frozen['version']}.py", frozen["params"], split)
         assert res["ok"], res["error"]
         final[split] = res["metrics"]
         plt.plot(pd.Series(res["equity"], index=pd.to_datetime(res["dates"])), label=split)
-    plt.yscale("log"); plt.legend(); plt.title(f"frozen {frozen['version']} across all periods"); plt.show()
+    plt.yscale("log"); plt.legend(); plt.title(f"frozen {frozen['version']} across all periods")
+    plt.tight_layout()
+    holdout_plot_path = EXEC_RESULTS / "frozen_holdout_equity.png"
+    plt.savefig(holdout_plot_path, dpi=120)
+    plt.close("all")
+    logger.info("Frozen strategy evaluated on holdout; equity curve saved to %s", holdout_plot_path)
 
     (WS/"results"/"holdout.json").write_text(json.dumps(final, indent=2))
     BENCH_HOLD = benchmark_table("holdout")
     comparison = pd.concat([pd.DataFrame(final).T.assign(source="strategy"),
                             BENCH_HOLD.assign(source="benchmark_holdout")])
-    print(comparison[["cagr","sharpe","sortino","max_dd","ann_turnover","source"]])
+    logger.debug("Holdout comparison table:\n%s", comparison[["cagr","sharpe","sortino","max_dd","ann_turnover","source"]].to_string())
 
 
     # AUDIT COMPLETE RESEARCH TRAIL
@@ -347,18 +351,24 @@ def main():
 
     _ = run(REPORT_BRIEF, agent, "brief")
 
-    # Render report alongside full experiment registry and verify version data
+    # Log final summary and verify version data
 
-    display(Markdown("## Agent report"))
-    display(Markdown((WS / "report.md").read_text(encoding="utf-8")))
-
-    display(Markdown("## Experiment registry"))
     reg = pd.read_csv(REGISTRY)
-    display(reg[["version","run","status","params","dev_sharpe","dev_sortino",
-                "dev_max_dd","dev_turnover","val_sharpe","val_max_dd","dev_cagr_20bps"]])
-    print("versions with runs:", sorted(reg["version"].unique()))
-    print("decisions recorded:", [d["version"] for d in _decisions()])
-    print("reviews on disk:  ", sorted(p.stem for p in (WS/"reviews").glob("*.md")))
+    logger.debug(
+        "Full Experiment Registry:\n%s",
+        reg[["version","run","status","params","dev_sharpe","dev_sortino",
+             "dev_max_dd","dev_turnover","val_sharpe","val_max_dd","dev_cagr_20bps"]].to_string(index=False)
+    )
+    logger.info(
+        "Research pipeline complete! Final audit written to %s, experiment stats saved to %s, "
+        "and detailed logs saved to %s (versions: %s | decisions: %s | reviews: %s)",
+        WS / "report.md",
+        REGISTRY,
+        LOG_FILE,
+        sorted(reg["version"].unique()),
+        [d["version"] for d in _decisions()],
+        sorted(p.stem for p in (WS/"reviews").glob("*.md"))
+    )
 
 if __name__ == "__main__":
     main()
