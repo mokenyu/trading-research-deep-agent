@@ -11,3 +11,6 @@ wheels/
 
 # Sensitive Files
 .env
+
+project/
+raw_cache/
