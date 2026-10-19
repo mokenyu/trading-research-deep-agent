@@ -71,7 +71,7 @@ You can run the full pipeline either as a standalone Python script or interactiv
 
 **Option A — Run via Python CLI:**
 ```bash
-uv run python src/main.py
+uv run python -m src.main
 ```
 
 **Option B — Run Interactive Notebook:**
