@@ -16,7 +16,7 @@
 
 ---
 
-## Overview & Core Philosophy
+## Overview & Core Philosoph
 
 When autonomous LLM agents are tasked with discovering quantitative trading strategies in an unconstrained loop, they naturally gravitate toward **overfitting, data snooping, and self-justification**—tuning parameters until historical backtest numbers look impressive while destroying out-of-sample validity.
 
